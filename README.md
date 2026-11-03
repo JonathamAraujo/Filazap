@@ -53,5 +53,5 @@
 - **Exportação lógica**: `COPY` (cqlsh) para tabelas pequenas e DSBulk para grandes volumes.
 
 ## Alunos:
-- **Artur Peres dos Santos
-- **Jonatham Alves Araujo
+- Artur Peres dos Santos
+- Jonatham Alves Araujo
