@@ -51,3 +51,7 @@
 - **Restauração ponto-no-tempo**: via arquivamento do commit log.
 - **Agendamento**: via `cron` ou ferramentas como o Medusa.
 - **Exportação lógica**: `COPY` (cqlsh) para tabelas pequenas e DSBulk para grandes volumes.
+
+## Alunos:
+- **Artur Peres dos Santos
+- **Jonatham Alves Araujo
