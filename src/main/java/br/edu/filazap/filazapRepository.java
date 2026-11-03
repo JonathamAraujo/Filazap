@@ -10,65 +10,121 @@ import java.util.Optional;
 import java.util.UUID;
 
 public class filazapRepository {
+
     private final CqlSession session;
-    private final PreparedStatement insert, insertChamado, select, delete, incAtendidos, selAtendidos;
+
+    private PreparedStatement stmtInserir;
+    private PreparedStatement stmtChamar;
+    private PreparedStatement stmtSelect;
+    private PreparedStatement stmtDelete;
+    private PreparedStatement stmtIncAtendidos;
+    private PreparedStatement stmtSelAtendidos;
 
     public filazapRepository(CqlSession session) {
         this.session = session;
         criarEsquema();
-        insert = session.prepare("INSERT INTO filazap.fila (local, entrada, senha_id, nome, curso, status) VALUES (?, ?, ?, ?, ?, 'aguardando')");
-        insertChamado = session.prepare("INSERT INTO filazap.fila (local, entrada, senha_id, nome, curso, status) VALUES (?, ?, ?, ?, ?, 'chamado') USING TTL 180");
-        select = session.prepare("SELECT entrada, senha_id, nome, curso, status FROM filazap.fila WHERE local = ?");
-        delete = session.prepare("DELETE FROM filazap.fila WHERE local = ? AND entrada = ?");
-        incAtendidos = session.prepare("UPDATE filazap.atendidos SET total = total + 1 WHERE local = ?");
-        selAtendidos = session.prepare("SELECT total FROM filazap.atendidos WHERE local = ?");
+        prepararComandos();
     }
 
     private void criarEsquema() {
-        session.execute("CREATE KEYSPACE IF NOT EXISTS filazap WITH replication = {'class':'SimpleStrategy','replication_factor':1}");
-        session.execute("CREATE TABLE IF NOT EXISTS filazap.fila (local text, entrada timeuuid, senha_id uuid, nome text, curso text, status text, PRIMARY KEY ((local), entrada)) WITH CLUSTERING ORDER BY (entrada ASC)");
-        session.execute("CREATE TABLE IF NOT EXISTS filazap.atendidos (local text PRIMARY KEY, total counter)");
+        session.execute("CREATE KEYSPACE IF NOT EXISTS filazap WITH replication = "
+                + "{'class':'SimpleStrategy','replication_factor':1}");
+
+        session.execute("CREATE TABLE IF NOT EXISTS filazap.fila ("
+                + "local text, entrada timeuuid, senha_id uuid, "
+                + "nome text, curso text, status text, "
+                + "PRIMARY KEY ((local), entrada)) "
+                + "WITH CLUSTERING ORDER BY (entrada ASC)");
+
+        session.execute("CREATE TABLE IF NOT EXISTS filazap.atendidos ("
+                + "local text PRIMARY KEY, total counter)");
     }
 
-    // CREATE
+    private void prepararComandos() {
+        stmtInserir = session.prepare(
+                "INSERT INTO filazap.fila (local, entrada, senha_id, nome, curso, status) "
+                        + "VALUES (?, ?, ?, ?, ?, 'aguardando')");
+
+        stmtChamar = session.prepare(
+                "INSERT INTO filazap.fila (local, entrada, senha_id, nome, curso, status) "
+                        + "VALUES (?, ?, ?, ?, ?, 'chamado') USING TTL 180");
+
+        stmtSelect = session.prepare(
+                "SELECT entrada, senha_id, nome, curso, status "
+                        + "FROM filazap.fila WHERE local = ?");
+
+        stmtDelete = session.prepare(
+                "DELETE FROM filazap.fila WHERE local = ? AND entrada = ?");
+
+        stmtIncAtendidos = session.prepare(
+                "UPDATE filazap.atendidos SET total = total + 1 WHERE local = ?");
+
+        stmtSelAtendidos = session.prepare(
+                "SELECT total FROM filazap.atendidos WHERE local = ?");
+    }
+
+
     public void entrar(String local, String nome, String curso) {
-        session.execute(insert.bind(local, Uuids.timeBased(), UUID.randomUUID(), nome, curso));
+        session.execute(stmtInserir.bind(
+                local,
+                Uuids.timeBased(),
+                UUID.randomUUID(),
+                nome,
+                curso));
     }
 
-    // READ
+
     public List<Row> listar(String local) {
-        return session.execute(select.bind(local)).all();
+        return session.execute(stmtSelect.bind(local)).all();
     }
 
     public int posicao(String local, String nome) {
-        int pos = 0;
+        int contador = 0;
         for (Row r : listar(local)) {
             if ("aguardando".equals(r.getString("status"))) {
-                pos++;
-                if (r.getString("nome").equalsIgnoreCase(nome)) return pos;
+                contador++;
+                if (r.getString("nome").equalsIgnoreCase(nome)) {
+                    return contador;
+                }
             }
         }
         return -1;
     }
 
-    // UPDATE (chama o próximo; a senha chamada expira em 180 s)
+
     public Optional<Row> chamarProximo(String local) {
         for (Row r : listar(local)) {
             if ("aguardando".equals(r.getString("status"))) {
-                session.execute(insertChamado.bind(local, r.getUuid("entrada"),
-                        r.getUuid("senha_id"), r.getString("nome"), r.getString("curso")));
-                session.execute(incAtendidos.bind(local));
+                session.execute(stmtChamar.bind(
+                        local,
+                        r.getUuid("entrada"),
+                        r.getUuid("senha_id"),
+                        r.getString("nome"),
+                        r.getString("curso")));
                 return Optional.of(r);
             }
         }
         return Optional.empty();
     }
 
-    // DELETE
+
+    public boolean confirmarAtendimento(String local, String nome) {
+        for (Row r : listar(local)) {
+            if ("chamado".equals(r.getString("status"))
+                    && r.getString("nome").equalsIgnoreCase(nome)) {
+                session.execute(stmtDelete.bind(local, r.getUuid("entrada")));
+                session.execute(stmtIncAtendidos.bind(local));
+                return true;
+            }
+        }
+        return false;
+    }
+
+
     public boolean sair(String local, String nome) {
         for (Row r : listar(local)) {
             if (r.getString("nome").equalsIgnoreCase(nome)) {
-                session.execute(delete.bind(local, r.getUuid("entrada")));
+                session.execute(stmtDelete.bind(local, r.getUuid("entrada")));
                 return true;
             }
         }
@@ -76,7 +132,7 @@ public class filazapRepository {
     }
 
     public long atendidos(String local) {
-        Row r = session.execute(selAtendidos.bind(local)).one();
+        Row r = session.execute(stmtSelAtendidos.bind(local)).one();
         return r == null ? 0 : r.getLong("total");
     }
 }
